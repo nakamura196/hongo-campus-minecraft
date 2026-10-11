@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hongo mesh viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #b8c8d8; overflow: hidden; font: 13px system-ui, sans-serif; }
+  #info { position: absolute; left: 8px; top: 8px; background: #fffc; padding: 4px 8px; border-radius: 4px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="info">読み込み中…</div>
+<script type="module">
+// Usage: python3 -m http.server 8123 --bind 127.0.0.1 (repo root), then
+// http://127.0.0.1:8123/web/viewer.html?glb=../out/vr/hongo.glb&cam=x,y,z&at=x,y,z&hide=crowns,trunks
+// raw points (points.py): ?glb=../out/vr/points.glb&pt=2  (pt = point size)
+// ptm = point size in metres (default 0.4, used for the tree points of hongo.glb when pt is not given)
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+const q = new URLSearchParams(location.search);
+const vec = (s, d) => new THREE.Vector3(...(s ? s.split(",").map(Number) : d));
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xb8c8d8);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x80705a, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+sun.position.set(-150, 250, 100);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.5, 3000);
+camera.position.copy(vec(q.get("cam"), [-60, 120, 220]));
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(vec(q.get("at"), [0, 0, 0]));
+controls.update();
+
+new GLTFLoader().load(q.get("glb") || "../out/vr/hongo.glb", (g) => {
+  const hide = (q.get("hide") || "").split(",").filter(Boolean);   // e.g. hide=crowns,trunks
+  g.scene.traverse((o) => {
+    if ((o.isMesh || o.isPoints) && o.geometry.attributes.color) o.material.vertexColors = true;
+    // three.js draws a point size*(h/2)/depth px tall; a ptm-metre object is ptm*(h/2)/(depth*tan(fov/2)) px
+    if (o.isPoints) o.material.size = q.get("pt") ? Number(q.get("pt"))
+      : Number(q.get("ptm") || 0.4) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    if (hide.includes(o.name)) o.visible = false;
+  });
+  scene.add(g.scene);
+  document.getElementById("info").textContent = "ドラッグで回転・右ドラッグで移動・ホイールで拡大";
+  window.loaded = true; window.scene = scene; window.renderer = renderer;
+}, undefined, (e) => { document.getElementById("info").textContent = "読み込み失敗: " + e; });
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script>
+</body>
+</html>

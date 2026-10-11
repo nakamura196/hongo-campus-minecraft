@@ -10,7 +10,20 @@ import io, json, os, sys, urllib.request, zipfile
 
 LIDAR = "https://gic-tokyo.s3.ap-northeast-1.amazonaws.com/2024/dig/lp/{tile}.zip"
 CATALOG = "https://api.plateauview.mlit.go.jp/datacatalog/citygml/m:{mesh}"
-MESHES = {"09LD0863": ["53394650", "53394651"]}   # add tiles here as the build grows
+MESHES = {"09LD0833": ["53394660", "53394661"], "09LD0834": ["53394661"],
+          "09LD0843": ["53394650", "53394651", "53394660", "53394661"], "09LD0844": ["53394651", "53394661"],
+          "09LD0853": ["53394650", "53394651"], "09LD0854": ["53394651"],
+          "09LD0863": ["53394650", "53394651"], "09LD0864": ["53394651"],
+          "09LD0873": ["53394640", "53394641", "53394650", "53394651"], "09LD0874": ["53394641", "53394651"],
+          # streets around the campus (Hongo-dori, Kasuga-dori, Shinobazu-dori): one tile on each side
+          "09LD0832": ["53394660"], "09LD0835": ["53394661"], "09LD0842": ["53394650", "53394660"],
+          "09LD0845": ["53394651", "53394661"], "09LD0852": ["53394650"], "09LD0855": ["53394651"],
+          "09LD0862": ["53394650"], "09LD0865": ["53394651"], "09LD0872": ["53394640", "53394650"],
+          "09LD0875": ["53394641", "53394651"], "09LD0882": ["53394640"], "09LD0883": ["53394640", "53394641"],
+          "09LD0884": ["53394641"], "09LD0885": ["53394641"],
+          # Ueno station / Ameyoko (Taito-ku, PLATEAU LOD2 with textures), for comparison
+          "09LD0867": ["53394652"]}
+# add tiles here as the build grows (meshes = those the tile's corners and edge midpoints fall in)
 
 
 def get(url):

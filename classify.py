@@ -7,12 +7,18 @@ We separate class 1 using three clues:
   - returns: a non-last return of a multi-return pulse means the laser went
     partly through something (leaves); roofs give a single return
 
-    python classify.py TILE.las BLDG.geojson OUTDIR [--exg 0.05]
+    python classify.py TILE.las [TILE2.las ...] BLDG.geojson OUTDIR [--exg 0.05] [--cell 0.5]
+                       [--bbox X0 Y0 X1 Y1 --name NAME]
 
+Several tiles are merged into one grid named after them (09LD0853+09LD0863).
+--bbox keeps only the points in that rectangle (plane coordinates, m) and makes it the grid;
+--name replaces the long joined name.
+--cell sets the grid size in m (default 1); other sizes get a suffix (..._0.5m_cells.npz).
 Writes OUTDIR/<tile>_labels.png (top view), <tile>_rgb.png, and
-<tile>_cells.npz (1 m grid: label, top height, ground height) for the builder.
+<tile>_cells.npz (1 m grid: label, top height, height covering half the cell, ground height, rgb of the top
+point, bid = index of the PLATEAU building the cell lies in, -1 outside) for the builder.
 """
-import json, os, sys
+import json, os, sys, warnings
 import numpy as np, laspy
 from PIL import Image, ImageDraw
 
@@ -40,35 +46,57 @@ def fill_nan(a, iters=200):
 def main():
     args = sys.argv[1:]
     exg_t = 0.05
+    cell = 1.0
     if "--exg" in args:
         i = args.index("--exg"); exg_t = float(args[i + 1]); del args[i:i + 2]
-    las_path, bldg_path, outdir = args
-    tile = os.path.splitext(os.path.basename(las_path))[0]
+    if "--cell" in args:
+        i = args.index("--cell"); cell = float(args[i + 1]); del args[i:i + 2]
+    bbox = name = None
+    if "--bbox" in args:
+        i = args.index("--bbox"); bbox = [float(v) for v in args[i + 1:i + 5]]; del args[i:i + 5]
+    if "--name" in args:
+        i = args.index("--name"); name = args[i + 1]; del args[i:i + 2]
+    *las_paths, bldg_path, outdir = args
+    tile = name or "+".join(os.path.splitext(os.path.basename(p))[0] for p in las_paths)
+    if cell != 1:
+        tile += f"_{cell:g}m"
     os.makedirs(outdir, exist_ok=True)
 
-    las = laspy.read(las_path)
-    x, y, z = np.asarray(las.x), np.asarray(las.y), np.asarray(las.z)
-    cls = np.asarray(las.classification)
-    rn, nr = np.asarray(las.return_number), np.asarray(las.number_of_returns)
-    r, g, b = [np.asarray(las[k]).astype(np.float32) for k in ("red", "green", "blue")]
+    cols = {k: [] for k in ("x", "y", "z", "classification", "return_number",
+                            "number_of_returns", "red", "green", "blue")}
+    for p in las_paths:
+        las = laspy.read(p)
+        keep = slice(None)
+        if bbox:
+            px, py = np.asarray(las.x), np.asarray(las.y)
+            keep = (px >= bbox[0]) & (px < bbox[2]) & (py >= bbox[1]) & (py < bbox[3])
+        for k in cols:
+            cols[k].append(np.asarray(getattr(las, k) if k in "xyz" else las[k])[keep])
+    x, y, z, cls, rn, nr = (np.concatenate(cols[k]) for k in
+                            ("x", "y", "z", "classification", "return_number", "number_of_returns"))
+    r, g, b = [np.concatenate(cols[k]).astype(np.float32) for k in ("red", "green", "blue")]
     x0, y1 = np.floor(x.min() / 100) * 100, np.ceil(y.max() / 100) * 100
-    W, H = int(np.ceil((x.max() - x0))), int(np.ceil((y1 - y.min())))
-    ix = np.clip((x - x0).astype(int), 0, W - 1)
-    iy = np.clip((y1 - y).astype(int), 0, H - 1)
+    W, H = int(np.ceil((x.max() - x0) / cell)), int(np.ceil((y1 - y.min()) / cell))
+    if bbox:
+        x0, y1 = bbox[0], bbox[3]
+        W, H = int(round((bbox[2] - bbox[0]) / cell)), int(round((bbox[3] - bbox[1]) / cell))
+    ix = np.clip(((x - x0) / cell).astype(int), 0, W - 1)
+    iy = np.clip(((y1 - y) / cell).astype(int), 0, H - 1)
     k = iy * W + ix
-    print(f"{tile}: {len(x):,} points, grid {W}x{H} m, origin x={x0} y={y1}")
+    print(f"{tile}: {len(x):,} points, grid {W}x{H} cells of {cell:g} m, origin x={x0} y={y1}")
 
-    # ground height per 1 m cell: lowest ground return, holes filled from neighbours
+    # ground height per cell: lowest ground return, holes filled from neighbours
     dem = np.full(W * H, np.inf)
     gm = cls == 2
     np.minimum.at(dem, k[gm], z[gm])
     dem[np.isinf(dem)] = np.nan
-    dem = fill_nan(dem.reshape(H, W))
+    dem = fill_nan(dem.reshape(H, W), int(200 / cell))
     hag = z - dem.ravel()[k]
 
     # building outlines rasterised at 0.25 m so edge points are judged fairly
     S = 4
-    img = Image.new("1", (W * S, H * S), 0)
+    Wm, Hm = int(np.ceil(W * cell)), int(np.ceil(H * cell))
+    img = Image.new("1", (Wm * S, Hm * S), 0)
     dr = ImageDraw.Draw(img)
     feats = json.load(open(bldg_path, encoding="utf-8"))["features"]
     for f in feats:
@@ -76,8 +104,13 @@ def main():
             ring = [((px - x0) * S, (y1 - py) * S) for px, py in poly[0]]
             dr.polygon(ring, fill=1)
     fine = np.array(img, bool)
-    inb = fine[np.clip(((y1 - y) * S).astype(int), 0, H * S - 1),
-               np.clip(((x - x0) * S).astype(int), 0, W * S - 1)]
+    ids = Image.new("I", (W, H), -1)                # building index per cell, for colours
+    di = ImageDraw.Draw(ids)
+    for n, f in enumerate(feats):
+        for poly in f["geometry"]["coordinates"]:
+            di.polygon([((px - x0) / cell, (y1 - py) / cell) for px, py in poly[0]], fill=n)
+    inb = fine[np.clip(((y1 - y) * S).astype(int), 0, Hm * S - 1),
+               np.clip(((x - x0) * S).astype(int), 0, Wm * S - 1)]
 
     exg = (2 * g - r - b) / np.maximum(r + g + b, 1)
     green = exg > exg_t
@@ -106,13 +139,25 @@ def main():
     for name, v in (("building", BUILDING), ("tree", TREE), ("other", OTHER), ("low", LOW)):
         print(f"  label {name:8s} {np.mean(lab == v)*100:5.1f}% of points")
 
-    # --- 1 m cells: label of the highest point; empty cells inside nothing = water ---
+    # --- cells: label of the highest point; empty cells inside nothing = water ---
     o = np.lexsort((z, k))
     top = o[np.r_[k[o][1:] != k[o][:-1], True]]
     cell_lab = np.full(W * H, WATER, np.uint8)
     cell_top = np.full(W * H, np.nan, np.float32)
     cell_lab[k[top]] = lab[top]
     cell_top[k[top]] = z[top]
+    # height that covers half of the cell: the median of the highest points of its 0.25 m
+    # sub-cells (~3 points each; 16 in a 1 m cell, empty ones are skipped). The highest point alone
+    # makes a tower one cell too wide wherever it just touches a cell (Yasuda clock tower: 128 m2 vs ~100 m2).
+    n = max(1, int(round(cell * 4)))
+    q = ((y1 - y) * 4).astype(int) % n * n + ((x - x0) * 4).astype(int) % n
+    qmax = np.full((W * H, n * n), -np.inf, np.float32)
+    np.maximum.at(qmax, (k, q), z)
+    qmax[np.isinf(qmax)] = np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)          # cells without points
+        cell_half = np.nanmedian(qmax, 1)
+    cell_half = np.where(np.isnan(cell_half), cell_top, cell_half).astype(np.float32)
     # a cell whose top is a tree but most of its tall points are building stays building (eaves)
     nb_ = np.bincount(k, (lab == BUILDING), W * H)
     nt_ = np.bincount(k, (lab == TREE), W * H)
@@ -129,20 +174,22 @@ def main():
                     ("other", OTHER), ("water/empty", WATER), ("low", LOW)):
         print(f"  cells {name:11s} {np.mean(cell_lab == v)*100:5.1f}%")
 
+    rgb = np.zeros((W * H, 3), np.uint8)
+    rgb[k[top]] = (np.c_[r[top], g[top], b[top]] / (256 if r.max() > 255 else 1)).astype(np.uint8)
+    rgb = rgb.reshape(H, W, 3)
     np.savez_compressed(os.path.join(outdir, f"{tile}_cells.npz"), label=cell_lab,
-                        top=cell_top.reshape(H, W), ground=dem.astype(np.float32),
-                        origin=np.array([x0, y1]))
+                        top=cell_top.reshape(H, W), half=cell_half.reshape(H, W), ground=dem.astype(np.float32),
+                        rgb=rgb, bid=np.array(ids, np.int32), origin=np.array([x0, y1]),
+                        cell=np.float32(cell))
 
     # --- pictures ---
     pic = Image.fromarray(COLORS[cell_lab])
     d = ImageDraw.Draw(pic)
     for f in feats:
         for poly in f["geometry"]["coordinates"]:
-            d.line([(px - x0, y1 - py) for px, py in poly[0]], fill=(255, 255, 255), width=1)
+            d.line([((px - x0) / cell, (y1 - py) / cell) for px, py in poly[0]], fill=(255, 255, 255), width=1)
     pic.resize((W * 2, H * 2), Image.NEAREST).save(os.path.join(outdir, f"{tile}_labels.png"))
-    rgb = np.zeros((W * H, 3), np.uint8)
-    rgb[k[top]] = np.c_[r[top], g[top], b[top]].astype(np.uint16) >> 8 if r.max() > 255 else np.c_[r[top], g[top], b[top]]
-    Image.fromarray(rgb.reshape(H, W, 3)).resize((W * 2, H * 2), Image.NEAREST).save(
+    Image.fromarray(rgb).resize((W * 2, H * 2), Image.NEAREST).save(
         os.path.join(outdir, f"{tile}_rgb.png"))
 
 

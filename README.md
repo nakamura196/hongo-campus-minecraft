@@ -190,3 +190,21 @@ python build.py data/out/wide_cells.npz out/wide.zip --rows 0 1650 --cols 0 1100
 - PLATEAU を Minecraft に変える既製の道具は見つからなかった
 
 `data/` と `out/` は Git に入れない（`fetch.py` で取り直せる）。
+
+## 配布用のワールド（本線だけ）
+
+```
+python dist.py out/wide.zip out/grass_pack.zip out/hongo-campus.zip
+```
+
+- `server-dist/`（Git 外）で 2 台目のサーバ（ポート 25566、RCON 25576）を立て、空の超平坦ワールドに本線（wide）だけを置く。
+  ふだんのサーバ（`server/`）は止めなくてよい
+- 出発地点は安田講堂前（3502 −37 890、東向き）。昼・晴れに固定し、敵は出ない
+- 置き終えたらデータパック（置くための命令だけ、50 MB）を外し、草のパックを `resources.zip`、出典を `README.txt` として同梱する
+- 使う人は zip を `.minecraft/saves/` に展開する。開くと同梱のパックを使うか聞かれる
+- 作り直すときは `server-dist/hongo-campus` を消してから実行する
+- 公開: https://github.com/nakamura196/hongo-campus-minecraft-world （Releases に zip、ワールドは CC BY 4.0）
+
+## ライセンス
+
+コードは MIT（`LICENSE`）。作ったワールドは CC BY 4.0（配布リポジトリの README に出典の書き方）。

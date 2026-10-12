@@ -12,8 +12,15 @@ zip the world folder.
 
 The player unzips into .minecraft/saves/ and opens the world; the game offers the
 bundled resource pack when the world loads.
+
+    python dist.py out/wide.zip out/grass_pack.zip out/hongo-campus.zip --bedrock out/hongo-campus.mcworld
+
+also converts the finished world for Bedrock Edition with Chunker (Hive Games, MIT;
+the jar is fetched once into server-dist/ and checked against its SHA-256). The format
+is Bedrock 1.21.130, old enough for most phones and tablets; newer games open it too.
+The grass pack is Java only, so on Bedrock the slopes are plain grass blocks.
 """
-import argparse, os, re, shutil, subprocess, sys, time, zipfile
+import argparse, hashlib, os, re, shutil, subprocess, sys, tempfile, time, urllib.request, zipfile
 import server
 
 DIR = "server-dist"
@@ -22,6 +29,9 @@ PORTS = {"server-port": "25566", "rcon.port": "25576"}
 SPAWN = "3502 -37 890 -90 0"         # in front of Yasuda Auditorium, facing east (toward it)
 RULES = {"respawn_radius": 0, "advance_time": "false", "advance_weather": "false",
          "spawn_mobs": "false", "spawn_phantoms": "false"}
+CHUNKER = ("https://github.com/HiveGamesOSS/Chunker/releases/download/1.21.0/chunker-cli-1.21.0.jar",
+           "63148e587f5ee5a2ca7ebae1079b235c82ae4d1eff8f7a8a8a3398332513dda6")
+BEDROCK = "BEDROCK_R21_130"
 
 README = """Hongo Campus (University of Tokyo) in Minecraft Java Edition {version}
 
@@ -84,10 +94,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("pack"); ap.add_argument("resources"); ap.add_argument("out")
     ap.add_argument("--package-only", action="store_true", help="skip placing; re-pack the world already built")
+    ap.add_argument("--bedrock", metavar="OUT.mcworld", help="also write a Bedrock Edition world")
     a = ap.parse_args()
     if not a.package_only:
         build(a)
     package(a)
+    if a.bedrock:
+        bedrock(a.bedrock)
 
 
 def build(a):
@@ -135,6 +148,28 @@ def package(a):
                 p = os.path.join(root, f)
                 z.write(p, os.path.relpath(p, DIR))
     print(a.out, f"{os.path.getsize(a.out) / 1e6:.1f} MB")
+
+
+def bedrock(out):
+    url, sha = CHUNKER
+    jar = f"{DIR}/{os.path.basename(url)}"
+    if not os.path.exists(jar):
+        os.makedirs(DIR, exist_ok=True)
+        data = urllib.request.urlopen(url).read()
+        if hashlib.sha256(data).hexdigest() != sha:
+            sys.exit(f"{url}: SHA-256 does not match")
+        open(jar, "wb").write(data)
+    with tempfile.TemporaryDirectory() as tmp:
+        dst = f"{tmp}/{WORLD}"
+        subprocess.run([server.JAVA, "-Xmx4G", "-jar", jar, "-i", f"{DIR}/{WORLD}", "-o", dst, "-f", BEDROCK],
+                       check=True, stdout=subprocess.DEVNULL)
+        open(f"{dst}/levelname.txt", "w").write(WORLD)
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+            for root, _, files in os.walk(dst):
+                for f in files:
+                    p = os.path.join(root, f)
+                    z.write(p, os.path.relpath(p, dst))
+    print(out, f"{os.path.getsize(out) / 1e6:.1f} MB")
 
 
 if __name__ == "__main__":

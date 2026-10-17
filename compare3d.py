@@ -5,7 +5,7 @@ so the viewer can switch between them (the LiDAR points and the PLATEAU building
         --base https://nakamura196.github.io/hongo-campus-iiif/ \
         --model plateau-ueno.glb "PLATEAU LOD2（写真つき）" "PLATEAU LOD2 (textured)" \
         --model ueno-points-light.glb "点群（軽量）" "Points (light)" ... \
-        --labels data/plateau/13106_53394652_bldg.gml 1.99
+        --labels data/plateau/13106_53394652_bldg.gml 1.99 --thumbnail ueno-thumbnail.jpg 800 600
 
 The first model is shown first. No "progressive" behavior: these are alternatives, not levels.
 The rectangle (EPSG:6677) gives navPlace and four ground control points at its corners for
@@ -14,6 +14,9 @@ the georeferencing annotation, in the axes of points.py (x east, y up, z south, 
 --labels GML BASE adds a commenting annotation (a pin) on the roof of each PLATEAU building in the
 rectangle that has a name (gml:name), and on the tallest one, each with a camera (<pin id>/camera) to view
 it from. BASE is the same --base as plateau_glb.py.
+
+--thumbnail FILE W H puts a picture (under --base) on the Manifest and the Scene, for lists and galleries
+that show one image per item (a Scene has no image of its own to show).
 """
 import argparse, json
 import numpy as np
@@ -54,6 +57,7 @@ def main():
     ap.add_argument("--base", required=True)
     ap.add_argument("--model", nargs=3, action="append", required=True, metavar=("FILE", "JA", "EN"))
     ap.add_argument("--labels", nargs=2, metavar=("GML", "BASE"))
+    ap.add_argument("--thumbnail", nargs=3, metavar=("FILE", "W", "H"))
     a = ap.parse_args()
     x0, y0, x1, y1 = a.bbox
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
@@ -86,6 +90,9 @@ def main():
              "properties": {"title": f"範囲の{ja}の角", "resourceCoords": [round(x, 2), 0, round(z, 2)]},
              "geometry": {"type": "Point", "coordinates": lonlat(x, z)}} for x, z, ja, en in corners]
 
+    thumb = {"thumbnail": [{"id": a.base + a.thumbnail[0], "type": "Image", "format": "image/jpeg",
+                            "width": int(a.thumbnail[1]), "height": int(a.thumbnail[2])}]} if a.thumbnail else {}
+
     pins = []
     if a.labels:
         for i, (name, x, y, z, h) in enumerate(named_buildings(a.labels[0], float(a.labels[1]), a.bbox,
@@ -116,6 +123,7 @@ def main():
                         "PLATEAU の建物モデル（LOD2・空中写真のテクスチャつき）で示す。左下の切り替えで見比べられる。",
                         "The same area of about 260 x 290 m as airborne LiDAR points (surveyed March-April 2023) "
                         "and as PLATEAU building models (LOD2, textured from aerial photos). Switch between them."),
+        **thumb,
         "requiredStatement": {
             "label": lang("出典", "Attribution"),
             "value": lang("点群: 東京都「東京都デジタルツイン実現プロジェクト 区部点群データ」(CC BY 4.0) を加工。"
@@ -125,7 +133,7 @@ def main():
         "navPlace": {"id": mid + "#place", "type": "FeatureCollection", "features": [{
             "id": mid + "#place/1", "type": "Feature", "properties": {"label": lang("模型の範囲", "Extent of the model")},
             "geometry": {"type": "Polygon", "coordinates": [[lonlat(x, z) for x, z, *_ in corners + corners[:1]]]}}]},
-        "items": [{"id": scene, "type": "Scene", "label": lang("上野駅周辺", "Around Ueno station"),
+        "items": [{"id": scene, "type": "Scene", "label": lang("上野駅周辺", "Around Ueno station"), **thumb,
                    "spatialScale": {"type": "UnitValue", "quantityValue": 1.0, "unit": "m"},
                    "items": [{"id": mid + "#painting", "type": "AnnotationPage", "items": painting}],
                    "annotations": [{"id": mid + "#georef", "type": "AnnotationPage", "items": [{

@@ -102,6 +102,10 @@ def main():
                          "body": {"type": "PerspectiveCamera", "fieldOfView": 50,
                                   "lookAt": {"type": "PointSelector", "x": round(x, 2), "y": round(y, 2), "z": round(z, 2)}},
                          "target": target(x + 60, y + 100, z + 150)})
+            # on the map too, as in iiif3d.py
+            gcps.append({"type": "Feature", "id": f"{mid}#building-{i + 1}/gcp",
+                         "properties": {"title": ja, "resourceCoords": [round(x, 2), round(y, 2), round(z, 2)]},
+                         "geometry": {"type": "Point", "coordinates": lonlat(x, z)}})
 
     manifest = {
         "@context": ["http://iiif.io/api/extension/georef/1/context.json",
